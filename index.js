@@ -4,7 +4,7 @@ const _ = require('lodash')
 class Node {
     constructor(parent = null, turn = 0, a, b, choice = null, level, choiceHistory) {
         // if (choice.length) console.log(level+": "+(turn ? 'a' : 'b') + ' choose ' + choice.join(' '))
-
+        this.maxLevel = this.minLevel = this.level = level
         this.parent = parent
         this.minmax = 0
         this.turn = turn
@@ -22,13 +22,14 @@ class Node {
         if (!this.turn && !this.bcards.length) {
             // console.log('B wins: ' + choiceHistory.join(','))
             this.update(0)
-        }
-
-        if (this.turn && !this.acards.length) {
+        }else if (this.turn && !this.acards.length) {
             // console.log('A wins: ' + choiceHistory.join('+'))
             this.update(1)
+        } else if (this.end === 1) {
+            update(-1)
         }
     }
+
     add(node) {
         this.nexts.push(node)
         return node
@@ -36,18 +37,36 @@ class Node {
 
     update(value) {
         this.end = 1
-        this.minmax = value
-        let cur = this.parent
 
-        while (cur != null) {
-            let res = cur.turn
-
-            for (let next of cur.nexts) {
-                res = cur.turn ? (res & next.minmax) : (res | next.minmax)
+        if (value === -1) {//force update, result is unknown
+            let cur = this
+            while (cur != null) {
+                cur.minmax = -1
+                cur = cur.parent
             }
+        } else {
+            this.minmax = value
+            let cur = this.parent
 
-            cur.minmax = res
-            cur = cur.parent
+            while (cur != null) {
+                let res = cur.turn, maxLevel = cur.maxLevel, minLevel = cur.minLevel
+
+                for (let next of cur.nexts) {
+                    maxLevel = Math.max(maxLevel, next.maxLevel)
+                    minLevel = Math.min(minLevel, next.minLevel)
+
+                    if (next.minmax === -1) {
+                        res = -1
+                    }
+
+                    res = res===-1?res:(cur.turn ? (res & next.minmax) : (res | next.minmax))
+                }
+
+                cur.maxLevel = maxLevel
+                cur.minLevel = minLevel
+                cur.minmax = res
+                cur = cur.parent
+            }
         }
     }
 }
@@ -188,7 +207,7 @@ class Player {
         this._sortCards()
     }
 }
-
+const MAXLEVEL = 1000
 const buildTree = (node = null, level, choiceHistory) => {
     if (node.end) return
     let choices = [...node.player.choices(node.choice)]
@@ -198,6 +217,14 @@ const buildTree = (node = null, level, choiceHistory) => {
         node.player.remove(choice)
         choiceHistory.push(stashed)
         let child = node.add(new Node(node, 1 - node.turn, node.a, node.b, stashed, level, choiceHistory))
+
+        if (level >= MAXLEVEL) {
+
+            child.end = 1
+        }else{
+            buildTree(child, level + 1, choiceHistory)
+        }
+
         child.tryUpdate()
         buildTree(child, level + 1, choiceHistory)
         choiceHistory.pop()
@@ -211,8 +238,9 @@ const onlyToPass = (node) => {
 }
 
 const findNext = (node) => {
-    if (node.turn) return _.minBy(node.nexts, next => next.minmax)
-    return _.maxBy(node.nexts, next => next.minmax)
+    if (node.turn) return _.minBy(node.nexts, next => [next.minmax, next.minLevel])
+    let maxMinmax = _.maxBy(node.nexts, next => [next.minmax, next.maxLevel])
+    return maxMinmax
 }
 
 const matchNext = (node, chosen) => {
